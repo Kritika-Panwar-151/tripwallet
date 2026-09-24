@@ -5,9 +5,9 @@ import { getRegisteredUsers } from '../services/userRegistry'
 
 interface Props {
   navigate: NavigateFn
-  trip: Trip
+  trip?: Trip | null
   expenses: Expense[]
-  currentUser?: User
+  currentUser?: User | null
   onUpdateMemberBudget?: (tripId: string, userId: string, newBudget: number) => void
 }
 
@@ -143,6 +143,34 @@ export default function TripDashboard({ navigate, trip, expenses, currentUser, o
       reader.readAsDataURL(file)
     })
     event.target.value = ''
+  }
+
+  // Clean Empty State for New Accounts with 0 Trips
+  if (!trip) {
+    return (
+      <div className="min-h-[75vh] flex flex-col items-center justify-center p-6 text-center">
+        <div className="bg-white rounded-3xl border border-teal-100 shadow-xl p-8 max-w-md w-full animate-in fade-in">
+          <div className="w-20 h-20 bg-teal-50 border border-teal-100 rounded-3xl flex items-center justify-center text-4xl mx-auto mb-4 shadow-2xs">
+            ✈️
+          </div>
+          <h2 className="text-2xl font-black text-slate-900">
+            Welcome, {activeUser.name.split(' ')[0]}!
+          </h2>
+          <p className="text-slate-500 text-xs md:text-sm mt-2 mb-6 leading-relaxed">
+            You don't have any active trips planned yet. Create your first trip to set up your personal budget, invite travel companions, and start tracking receipts.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => navigate('create-trip')}
+            className="w-full py-4 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-lg shadow-teal-700/20 transition flex items-center justify-center gap-2 text-sm"
+          >
+            <span className="text-lg leading-none">+</span>
+            <span>Plan Your First Trip</span>
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // Calculations from useBudget

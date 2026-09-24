@@ -45,9 +45,26 @@ export default function HomeScreen({ navigate, trips, onSelectTrip }: Props) {
       </div>
 
       {/* Trip Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
-
-        {trips.map((trip) => {
+      {trips.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-teal-100 p-8 text-center shadow-sm max-w-md mx-auto my-10">
+          <div className="w-16 h-16 bg-teal-50 border border-teal-100 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4 shadow-2xs">
+            ✈️
+          </div>
+          <h2 className="text-xl font-black text-slate-800">No Trips Created Yet</h2>
+          <p className="text-xs text-slate-500 mt-2 mb-6 leading-relaxed">
+            You don't have any trips yet. Create your first trip to start managing your budget, currencies, and travel splits!
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('create-trip')}
+            className="w-full py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-md transition text-sm flex items-center justify-center gap-2"
+          >
+            <span>+</span> Plan Your First Trip
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+          {trips.map((trip) => {
           const pct = Math.round((trip.spent / trip.budget) * 100)
           const remaining = trip.budget - trip.spent
           const status = pct > 80 ? 'danger' : pct > 60 ? 'warning' : 'healthy'
@@ -208,6 +225,7 @@ export default function HomeScreen({ navigate, trips, onSelectTrip }: Props) {
           </div>
         </button>
       </div>
+      )}
 
       {/* Bottom Travel Banner */}
       <div className="relative overflow-hidden rounded-2xl p-7 flex items-center justify-between bg-gradient-to-r from-[#0f766e] via-[#0891b2] to-[#38bdf8]">

@@ -16,6 +16,8 @@ const expensesScreens: Screen[] = [
 const guardianScreens: Screen[] = ['ai-guardian', 'what-if']
 
 export default function BottomNav({ currentScreen, navigate }: Props) {
+  if (currentScreen === 'login') return null
+
   const isDashboard = dashboardScreens.includes(currentScreen)
   const isTrips = tripsScreens.includes(currentScreen)
   const isExpenses = expensesScreens.includes(currentScreen)

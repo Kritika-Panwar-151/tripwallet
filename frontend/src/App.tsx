@@ -13,7 +13,7 @@ import ExpenseHistory from './screens/ExpenseHistory'
 import AIGuardian from './screens/AIGuardian'
 import WhatIf from './screens/WhatIf'
 import GroupSettlement from './screens/GroupSettlement'
-import LoginScreen, { sampleUsers } from './screens/LoginScreen'
+import LoginScreen from './screens/LoginScreen'
 import {
   fetchTripsFromSupabase,
   fetchExpensesFromSupabase,
@@ -22,56 +22,136 @@ import {
   initialTripsFallback,
   initialExpensesFallback,
 } from './services/supabaseDataService'
+import { supabase } from './lib/supabase'
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('trip-dashboard')
-  const [currentUser, setCurrentUser] = useState<User>(sampleUsers[0])
-  const [trips, setTrips] = useState<Trip[]>(initialTripsFallback)
-  const [currentTrip, setCurrentTrip] = useState<Trip>(initialTripsFallback[0])
-  const [expenses, setExpenses] = useState<Expense[]>(initialExpensesFallback)
-  const [isConverterOpen, setIsConverterOpen] = useState(false)
-  const [loadingData, setLoadingData] = useState(true)
+  // Read persisted user session from localStorage
+  const getStoredUser = (): User | null => {
+    try {
+      const stored = localStorage.getItem('tripwallet_auth_user')
+      if (stored) return JSON.parse(stored)
+    } catch (e) {
+      console.warn('Failed reading stored auth user:', e)
+    }
+    return null
+  }
 
-  // Load Trips & Expenses from Supabase on mount
+  const initialUser = getStoredUser()
+  const [currentUser, setCurrentUser] = useState<User | null>(initialUser)
+  // First screen is LOGIN if not authenticated; otherwise DASHBOARD
+  const [screen, setScreen] = useState<Screen>(initialUser ? 'trip-dashboard' : 'login')
+  const [trips, setTrips] = useState<Trip[]>([])
+  const [currentTrip, setCurrentTrip] = useState<Trip | null>(null)
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [isConverterOpen, setIsConverterOpen] = useState(false)
+  const [, setLoadingData] = useState(true)
+
+  // Load Trips & Expenses based on logged-in user
   useEffect(() => {
     async function loadData() {
       try {
-        const loadedTrips = await fetchTripsFromSupabase()
-        const loadedExpenses = await fetchExpensesFromSupabase()
-        if (loadedTrips && loadedTrips.length > 0) {
-          setTrips(loadedTrips)
-          setCurrentTrip(loadedTrips[0])
-        }
-        if (loadedExpenses && loadedExpenses.length > 0) {
-          setExpenses(loadedExpenses)
+        const loadedTrips = (await fetchTripsFromSupabase()) || initialTripsFallback
+        const loadedExpenses = (await fetchExpensesFromSupabase()) || initialExpensesFallback
+
+        if (currentUser) {
+          // Filter trips that belong to or include the current user
+          const userTrips = loadedTrips.filter(
+            (t) =>
+              t.members?.includes(currentUser.id) ||
+              currentUser.id === 'usr_aisha' ||
+              currentUser.id === 'usr_you'
+          )
+
+          if (userTrips.length > 0) {
+            setTrips(userTrips)
+            setCurrentTrip(userTrips[0])
+          } else {
+            // Clean empty state for new users
+            setTrips([])
+            setCurrentTrip(null)
+          }
+
+          if (loadedExpenses && loadedExpenses.length > 0) {
+            setExpenses(loadedExpenses)
+          }
+        } else {
+          // If no user is logged in, keep state clean
+          setTrips([])
+          setCurrentTrip(null)
+          setExpenses([])
         }
       } catch (err) {
-        console.error('Failed to load Supabase data:', err)
+        console.error('Failed to load data:', err)
       } finally {
         setLoadingData(false)
       }
     }
     loadData()
-  }, [])
+  }, [currentUser])
 
   const navigate = (s: Screen) => {
     setScreen(s)
     window.scrollTo(0, 0)
   }
 
+  const handleUserLogin = (user: User) => {
+    setCurrentUser(user)
+    localStorage.setItem('tripwallet_auth_user', JSON.stringify(user))
+
+    // Filter or initialize trips for newly logged in user
+    const userTrips = initialTripsFallback.filter(
+      (t) => t.members?.includes(user.id) || user.id === 'usr_aisha'
+    )
+
+    if (userTrips.length > 0) {
+      setTrips(userTrips)
+      setCurrentTrip(userTrips[0])
+    } else {
+      // Empty state for new accounts with 0 trips
+      setTrips([])
+      setCurrentTrip(null)
+    }
+
+    setScreen('trip-dashboard')
+  }
+
+  const handleSignOut = async () => {
+    try {
+      localStorage.removeItem('tripwallet_auth_user')
+      await supabase.auth.signOut()
+    } catch (e) {
+      console.warn('Sign out error:', e)
+    }
+    setCurrentUser(null)
+    setCurrentTrip(null)
+    setTrips([])
+    setExpenses([])
+    setScreen('login')
+  }
+
   const handleCreateTrip = (newTrip: Trip) => {
     setTrips((prev) => [newTrip, ...prev])
     setCurrentTrip(newTrip)
-    saveTripToSupabase(newTrip, currentUser.id)
+    if (currentUser) {
+      saveTripToSupabase(newTrip, currentUser.id)
+    }
   }
 
   const handleAddExpense = (newExpense: Expense) => {
     setExpenses((prev) => [newExpense, ...prev])
-    setCurrentTrip((prev) => ({
-      ...prev,
-      spent: prev.spent + newExpense.convertedAmount,
-    }))
-    saveExpenseToSupabase(newExpense, currentUser.id)
+    if (currentTrip) {
+      setCurrentTrip((prev) =>
+        prev
+          ? {
+              ...prev,
+              spent: prev.spent + newExpense.convertedAmount,
+            }
+          : null
+      )
+      if (currentUser) {
+        saveExpenseToSupabase(newExpense, currentUser.id)
+      }
+    }
   }
 
   const handleUpdateMemberBudget = (tripId: string, userId: string, newBudget: number) => {
@@ -85,12 +165,12 @@ export default function App() {
         ...t,
         budget: newTotal > 0 ? newTotal : t.budget,
         memberBudgets: updatedBudgets,
-        personalBudget: userId === currentUser.id ? newBudget : t.personalBudget,
+        personalBudget: currentUser && userId === currentUser.id ? newBudget : t.personalBudget,
       }
     }
 
     setTrips((prev) => prev.map((t) => (t.id === tripId ? updateTripState(t) : t)))
-    setCurrentTrip((prev) => (prev.id === tripId ? updateTripState(prev) : prev))
+    setCurrentTrip((prev) => (prev && prev.id === tripId ? updateTripState(prev) : prev))
   }
 
   const renderScreen = () => {
@@ -100,7 +180,7 @@ export default function App() {
           <LoginScreen
             navigate={navigate}
             currentUser={currentUser}
-            onSelectUser={(u) => setCurrentUser(u)}
+            onSelectUser={handleUserLogin}
           />
         )
       case 'home':
@@ -118,7 +198,7 @@ export default function App() {
         return (
           <CreateTripScreen
             navigate={navigate}
-            currentUser={currentUser}
+            currentUser={currentUser || undefined}
             onCreated={handleCreateTrip}
           />
         )
@@ -168,16 +248,18 @@ export default function App() {
       <TopBar
         currentUser={currentUser}
         currentTrip={currentTrip}
+        currentScreen={screen}
         navigate={navigate}
         onOpenConverter={() => setIsConverterOpen(true)}
+        onSignOut={handleSignOut}
       />
 
-      {/* Main Screen Content with pb-24 for fixed bottom navigation */}
-      <main className="flex-1 pb-24 overflow-x-hidden">
+      {/* Main Screen Content with pb-24 for fixed bottom navigation (only when not login) */}
+      <main className={`flex-1 overflow-x-hidden ${screen === 'login' ? 'pb-0' : 'pb-24'}`}>
         {renderScreen()}
       </main>
 
-      {/* Fixed Mobile Bottom Navigation Bar */}
+      {/* Fixed Mobile Bottom Navigation Bar (Hidden on login screen) */}
       <BottomNav
         currentScreen={screen}
         navigate={navigate}
