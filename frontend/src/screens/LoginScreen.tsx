@@ -61,18 +61,57 @@ export default function LoginScreen({ navigate, onSelectUser }: Props) {
     }
   }
 
+  // Email format validation (must contain @ and valid domain)
+  const isValidEmail = (val: string) => {
+    return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(val.trim())
+  }
+
+  // Strong password breakdown
+  const pwdCriteria = {
+    hasLength: password.length >= 8,
+    hasUpper: /[A-Z]/.test(password),
+    hasLower: /[a-z]/.test(password),
+    hasNumber: /[0-9]/.test(password),
+    hasSpecial: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password),
+  }
+
+  const isPasswordValid = Object.values(pwdCriteria).every(Boolean)
+
   const handleContinueToStep2 = (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) {
       setMessage({ text: 'Please enter your full name', type: 'error' })
       return
     }
-    if (!email.trim() || !password.trim()) {
-      setMessage({ text: 'Please enter an email and password', type: 'error' })
+    if (!email.trim()) {
+      setMessage({ text: 'Please enter your email address', type: 'error' })
       return
     }
-    if (password.length < 6) {
-      setMessage({ text: 'Password must be at least 6 characters', type: 'error' })
+    if (!isValidEmail(email)) {
+      setMessage({
+        text: 'Please enter a valid email address with @ and a proper domain (e.g. name@example.com)',
+        type: 'error',
+      })
+      return
+    }
+    if (!pwdCriteria.hasLength) {
+      setMessage({ text: 'Password must be at least 8 characters long', type: 'error' })
+      return
+    }
+    if (!pwdCriteria.hasUpper) {
+      setMessage({ text: 'Password must include at least one uppercase letter (A-Z)', type: 'error' })
+      return
+    }
+    if (!pwdCriteria.hasLower) {
+      setMessage({ text: 'Password must include at least one lowercase letter (a-z)', type: 'error' })
+      return
+    }
+    if (!pwdCriteria.hasNumber) {
+      setMessage({ text: 'Password must include at least one number (0-9)', type: 'error' })
+      return
+    }
+    if (!pwdCriteria.hasSpecial) {
+      setMessage({ text: 'Password must include at least one special character (!@#$%^&*)', type: 'error' })
       return
     }
     setMessage(null)
@@ -364,32 +403,78 @@ export default function LoginScreen({ navigate, onSelectUser }: Props) {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">
-                Email Address
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-600">
+                  Email Address
+                </label>
+                {email && (
+                  <span className={`text-[10px] font-semibold ${isValidEmail(email) ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {isValidEmail(email) ? '✓ Valid format' : 'Valid domain required (.com, .org, etc.)'}
+                  </span>
+                )}
+              </div>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
                 required
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none transition text-sm"
+                className={`w-full px-4 py-2.5 rounded-xl border ${
+                  email && !isValidEmail(email)
+                    ? 'border-amber-300 focus:border-amber-500 focus:ring-amber-200'
+                    : 'border-slate-200 focus:border-teal-500 focus:ring-teal-200'
+                } focus:ring-2 outline-none transition text-sm`}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">
-                Password (minimum 6 characters)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-600">
+                  Password
+                </label>
+                {password && (
+                  <span className={`text-[10px] font-semibold ${isPasswordValid ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    {isPasswordValid ? '✓ Strong password' : 'Requirements pending'}
+                  </span>
+                )}
+              </div>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
-                minLength={6}
                 className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none transition text-sm"
               />
+
+              {/* Password Requirements Live Checklist */}
+              <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1 text-xs">
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  Password Security Requirements:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
+                  <div className={`flex items-center gap-1.5 ${pwdCriteria.hasLength ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                    <span>{pwdCriteria.hasLength ? '✓' : '○'}</span>
+                    <span>8+ characters</span>
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${pwdCriteria.hasUpper ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                    <span>{pwdCriteria.hasUpper ? '✓' : '○'}</span>
+                    <span>Uppercase (A-Z)</span>
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${pwdCriteria.hasLower ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                    <span>{pwdCriteria.hasLower ? '✓' : '○'}</span>
+                    <span>Lowercase (a-z)</span>
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${pwdCriteria.hasNumber ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                    <span>{pwdCriteria.hasNumber ? '✓' : '○'}</span>
+                    <span>Number (0-9)</span>
+                  </div>
+                  <div className={`flex items-center gap-1.5 col-span-1 sm:col-span-2 ${pwdCriteria.hasSpecial ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
+                    <span>{pwdCriteria.hasSpecial ? '✓' : '○'}</span>
+                    <span>Special symbol (!@#$%^&*)</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <button
