@@ -18,6 +18,12 @@ export interface User {
   homeCurrency: string
   avatar: string
   role?: string
+  homeCountry?: string
+  homeCity?: string
+  budgetBand?: string
+  travelStyle?: string
+  travellerType?: string
+  locale?: string
 }
 
 export interface Trip {
@@ -34,6 +40,12 @@ export interface Trip {
   partySize?: number
   members?: string[]
   isGroupTrip?: boolean
+  originCountry?: string
+  originCity?: string
+  destinationCountry?: string
+  destinationCity?: string
+  memberBudgets?: Record<string, number>
+  personalBudget?: number
   categoryCaps?: {
     accommodation: number
     transport: number

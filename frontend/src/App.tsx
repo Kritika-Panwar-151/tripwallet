@@ -74,6 +74,25 @@ export default function App() {
     saveExpenseToSupabase(newExpense, currentUser.id)
   }
 
+  const handleUpdateMemberBudget = (tripId: string, userId: string, newBudget: number) => {
+    const updateTripState = (t: Trip): Trip => {
+      const updatedBudgets = {
+        ...(t.memberBudgets || {}),
+        [userId]: newBudget,
+      }
+      const newTotal = Object.values(updatedBudgets).reduce((sum, b) => sum + b, 0)
+      return {
+        ...t,
+        budget: newTotal > 0 ? newTotal : t.budget,
+        memberBudgets: updatedBudgets,
+        personalBudget: userId === currentUser.id ? newBudget : t.personalBudget,
+      }
+    }
+
+    setTrips((prev) => prev.map((t) => (t.id === tripId ? updateTripState(t) : t)))
+    setCurrentTrip((prev) => (prev.id === tripId ? updateTripState(prev) : prev))
+  }
+
   const renderScreen = () => {
     switch (screen) {
       case 'login':
@@ -99,6 +118,7 @@ export default function App() {
         return (
           <CreateTripScreen
             navigate={navigate}
+            currentUser={currentUser}
             onCreated={handleCreateTrip}
           />
         )
@@ -108,6 +128,8 @@ export default function App() {
             navigate={navigate}
             trip={currentTrip}
             expenses={expenses}
+            currentUser={currentUser}
+            onUpdateMemberBudget={handleUpdateMemberBudget}
           />
         )
       case 'add-expense':

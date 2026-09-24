@@ -16,6 +16,12 @@ export const initialTripsFallback: Trip[] = [
     children: 0,
     partySize: 3,
     members: ['usr_you', 'usr_ravi', 'usr_asha'],
+    memberBudgets: {
+      usr_you: 25000,
+      usr_ravi: 20000,
+      usr_asha: 15000,
+    },
+    personalBudget: 25000,
     isGroupTrip: true,
     categoryCaps: {
       accommodation: 21000,
@@ -38,6 +44,11 @@ export const initialTripsFallback: Trip[] = [
     children: 1,
     partySize: 3,
     members: ['usr_you', 'usr_pooja'],
+    memberBudgets: {
+      usr_you: 15000,
+      usr_pooja: 10000,
+    },
+    personalBudget: 15000,
     isGroupTrip: true,
   },
 ]

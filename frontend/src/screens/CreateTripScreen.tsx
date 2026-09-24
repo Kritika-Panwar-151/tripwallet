@@ -1,71 +1,151 @@
-import { useState } from 'react'
-import type { NavigateFn, Trip } from '../types'
+import { useState, useMemo } from 'react'
+import type { NavigateFn, Trip, User } from '../types'
+import {
+  CANONICAL_COUNTRIES,
+  CANONICAL_CITIES,
+  getCurrencyForCountry,
+} from '../data/canonicalReferences'
+import { searchUsers, getRegisteredUsers } from '../services/userRegistry'
 
 interface Props {
   navigate: NavigateFn
+  currentUser?: User
   onCreated: (trip: Trip) => void
 }
 
-const currencies = ['INR (₹)', 'USD ($)', 'EUR (€)', 'GBP (£)', 'JPY (¥)', 'AUD (A$)']
+export default function CreateTripScreen({ navigate, currentUser, onCreated }: Props) {
+  // Current host user
+  const hostUser = currentUser || {
+    id: 'usr_you',
+    name: 'You (Aisha)',
+    email: 'aisha.rossi@example.invalid',
+    homeCurrency: 'INR',
+    avatar: '👩🏽',
+    role: 'Owner',
+  }
 
-const availableTravellers = [
-  { id: 'usr_you', name: 'You (Aisha)', avatar: '👩🏽', role: 'Owner' },
-  { id: 'usr_ravi', name: 'Ravi Sharma', avatar: '👨🏽', role: 'Editor' },
-  { id: 'usr_pooja', name: 'Pooja Tanaka', avatar: '👩🏻', role: 'Viewer' },
-  { id: 'usr_david', name: 'David Chen', avatar: '👨🏻', role: 'Editor' },
-]
-
-export default function CreateTripScreen({ navigate, onCreated }: Props) {
+  // 1. Trip Basic Info
   const [name, setName] = useState('Switzerland Expedition')
-  const [destination, setDestination] = useState('Zurich & Lucerne, Switzerland')
+  const [originCountry, setOriginCountry] = useState('India')
+  const [originCity, setOriginCity] = useState('Bengaluru')
+  const [destinationCountry, setDestinationCountry] = useState('Switzerland')
+  const [destinationCity, setDestinationCity] = useState('Zurich')
   const [startDate, setStartDate] = useState('2026-10-15')
   const [endDate, setEndDate] = useState('2026-10-22')
-  const [currency, setCurrency] = useState('INR (₹)')
-  const [budget, setBudget] = useState('100000')
-  const [adults, setAdults] = useState('2')
-  const [children, setChildren] = useState('1')
-  const [selectedMembers, setSelectedMembers] = useState<string[]>(['usr_you', 'usr_ravi', 'usr_pooja'])
 
-  // Category cap allocations based on total budget
-  const numBudget = parseFloat(budget) || 0
-  const [capPct, setCapPct] = useState({
-    stay: 35,
-    food: 25,
-    transport: 20,
-    activities: 10,
-    misc: 10,
+  // Auto-derived currency from Origin/Home Country
+  const autoCurrency = useMemo(() => getCurrencyForCountry(originCountry), [originCountry])
+
+  // 2. Travellers & Members
+  const [adults, setAdults] = useState('3')
+  const [children, setChildren] = useState('0')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedMembers, setSelectedMembers] = useState<User[]>([
+    hostUser,
+    ...getRegisteredUsers().filter((u) => u.id === 'usr_ravi' || u.id === 'usr_asha').slice(0, 2),
+  ])
+
+  // 3. Member-specific personal budgets (Host + each invited member)
+  const [memberBudgets, setMemberBudgets] = useState<Record<string, number>>({
+    [hostUser.id]: 35000,
+    usr_ravi: 35000,
+    usr_asha: 30000,
   })
 
-  const totalParty = (parseInt(adults) || 0) + (parseInt(children) || 0)
+  // Dynamic search results
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    const results = searchUsers(searchQuery)
+    // Filter out already selected members
+    return results.filter((u) => !selectedMembers.some((m) => m.id === u.id))
+  }, [searchQuery, selectedMembers])
 
-  const toggleMember = (id: string) => {
-    if (id === 'usr_you') return // owner cannot be removed
-    setSelectedMembers((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    )
+  // Total Group Budget is the exact sum of all members' individual personal budgets
+  const totalGroupBudget = useMemo(() => {
+    return selectedMembers.reduce((sum, member) => {
+      const b = memberBudgets[member.id] || 0
+      return sum + b
+    }, 0)
+  }, [selectedMembers, memberBudgets])
+
+  const totalParty = (parseInt(adults) || 1) + (parseInt(children) || 0)
+
+  const handleOriginCountryChange = (cName: string) => {
+    setOriginCountry(cName)
+    const country = CANONICAL_COUNTRIES.find((c) => c.name === cName)
+    if (country) {
+      const city = CANONICAL_CITIES.find((ct) => ct.countryId === country.id)
+      if (city) setOriginCity(city.name)
+    }
+  }
+
+  const handleDestinationCountryChange = (cName: string) => {
+    setDestinationCountry(cName)
+    const country = CANONICAL_COUNTRIES.find((c) => c.name === cName)
+    if (country) {
+      const city = CANONICAL_CITIES.find((ct) => ct.countryId === country.id)
+      if (city) setDestinationCity(city.name)
+    }
+  }
+
+  const handleAddMember = (user: User) => {
+    if (!selectedMembers.some((m) => m.id === user.id)) {
+      setSelectedMembers((prev) => [...prev, user])
+      setMemberBudgets((prev) => ({
+        ...prev,
+        [user.id]: prev[user.id] || 25000, // default budget for newly invited member
+      }))
+      setSearchQuery('')
+    }
+  }
+
+  const handleRemoveMember = (userId: string) => {
+    if (userId === hostUser.id) return // Host cannot be removed
+    setSelectedMembers((prev) => prev.filter((m) => m.id !== userId))
+    setMemberBudgets((prev) => {
+      const copy = { ...prev }
+      delete copy[userId]
+      return copy
+    })
+  }
+
+  const handleBudgetChange = (userId: string, amount: number) => {
+    setMemberBudgets((prev) => ({
+      ...prev,
+      [userId]: Math.max(0, amount),
+    }))
   }
 
   const handleCreate = () => {
+    const destinationString = `${destinationCity}, ${destinationCountry}`
+    const originString = `${originCity}, ${originCountry}`
+
     const newTrip: Trip = {
       id: `trp_${Date.now().toString(36)}`,
-      name,
-      destination,
+      name: name.trim() || 'My Group Trip',
+      destination: destinationString,
       startDate,
       endDate,
-      currency: currency.split(' ')[0],
-      budget: numBudget,
+      currency: autoCurrency,
+      budget: totalGroupBudget,
       spent: 0,
       adults: parseInt(adults) || 1,
       children: parseInt(children) || 0,
       partySize: totalParty,
-      members: selectedMembers,
+      members: selectedMembers.map((m) => m.id),
       isGroupTrip: selectedMembers.length > 1,
+      originCountry,
+      originCity: originString,
+      destinationCountry,
+      destinationCity,
+      memberBudgets,
+      personalBudget: memberBudgets[hostUser.id] || 0,
       categoryCaps: {
-        accommodation: Math.round((numBudget * capPct.stay) / 100),
-        food: Math.round((numBudget * capPct.food) / 100),
-        transport: Math.round((numBudget * capPct.transport) / 100),
-        activities: Math.round((numBudget * capPct.activities) / 100),
-        misc: Math.round((numBudget * capPct.misc) / 100),
+        accommodation: Math.round(totalGroupBudget * 0.35),
+        food: Math.round(totalGroupBudget * 0.25),
+        transport: Math.round(totalGroupBudget * 0.20),
+        activities: Math.round(totalGroupBudget * 0.10),
+        misc: Math.round(totalGroupBudget * 0.10),
       },
     }
 
@@ -74,229 +154,389 @@ export default function CreateTripScreen({ navigate, onCreated }: Props) {
   }
 
   return (
-    <div className="p-6 md:p-8 max-w-3xl mx-auto">
+    <div className="p-4 md:p-8 max-w-3xl mx-auto pb-28">
+      {/* Back Button */}
       <button
-        onClick={() => navigate('home')}
-        className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 mb-6 transition"
+        type="button"
+        onClick={() => navigate('trip-dashboard')}
+        className="flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-900 mb-5 transition"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Back to trips
+        Back to Dashboard
       </button>
 
-      {/* Title */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 text-teal-700 text-sm font-semibold mb-1">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Trip Planner
+      {/* Screen Title */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 text-teal-700 text-xs font-bold uppercase tracking-wider mb-1">
+          <span>✨ Trip Planner</span>
         </div>
-        <h1 className="text-3xl font-bold text-slate-900">Plan your trip</h1>
-        <p className="text-slate-500 mt-1">Set up group members, budget limits, and passenger breakdown.</p>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900">Create New Trip & Budget</h1>
+        <p className="text-slate-500 text-xs md:text-sm mt-1">
+          Invite members, define personal budgets, and automatically calculate your total group budget fund.
+        </p>
       </div>
 
-      <div className="bg-white rounded-3xl shadow-sm border border-teal-100 p-6 md:p-8 space-y-6">
-        {/* Basic Details */}
+      <div className="bg-white rounded-3xl shadow-sm border border-teal-100 p-5 md:p-8 space-y-6">
+        {/* ================= SECTION 1: TRIP DETAILS ================= */}
         <div className="space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-            1. Trip Information
-          </h2>
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              1. Trip Details & Geographic Anchor
+            </h2>
+            <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+              Currency: {autoCurrency} (Auto-Set)
+            </span>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Trip Name</label>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-600 mb-1">Trip Name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Europe Adventure"
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                placeholder="e.g. Switzerland Expedition"
+                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
               />
             </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Destination</label>
-              <input
-                type="text"
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                placeholder="e.g. Zurich, Switzerland"
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-              />
+            {/* Home/Origin Country & City */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  Home Country (Origin)
+                </label>
+                <select
+                  value={originCountry}
+                  onChange={(e) => handleOriginCountryChange(e.target.value)}
+                  className="w-full border border-slate-200 bg-white rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                >
+                  {CANONICAL_COUNTRIES.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name} ({c.defaultCurrency})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  Origin City
+                </label>
+                <input
+                  type="text"
+                  value={originCity}
+                  onChange={(e) => setOriginCity(e.target.value)}
+                  placeholder="e.g. Bengaluru"
+                  className="w-full border border-slate-200 bg-white rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-              />
+            {/* Destination Country & City */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-teal-50/40 rounded-2xl border border-teal-100">
+              <div>
+                <label className="block text-xs font-bold text-teal-900 mb-1">
+                  Trip Destination Country
+                </label>
+                <select
+                  value={destinationCountry}
+                  onChange={(e) => handleDestinationCountryChange(e.target.value)}
+                  className="w-full border border-teal-200 bg-white rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                >
+                  {CANONICAL_COUNTRIES.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-teal-900 mb-1">
+                  Destination City
+                </label>
+                <input
+                  type="text"
+                  value={destinationCity}
+                  onChange={(e) => setDestinationCity(e.target.value)}
+                  placeholder="e.g. Zurich"
+                  className="w-full border border-teal-200 bg-white rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-              />
+            {/* Dates */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Start Date</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">End Date</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:border-teal-500 outline-none"
+                />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* PARTY BREAKDOWN: ADULTS & CHILDREN */}
+        {/* ================= SECTION 2: TRAVELLERS & INVITE PEOPLE ================= */}
         <div className="pt-4 border-t border-slate-100 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              2. Travellers Breakdown
+            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              2. Travellers Breakdown & Party
             </h2>
-            <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-full">
-              Total Party Size: {totalParty} {totalParty === 1 ? 'person' : 'people'}
+            <span className="text-[11px] font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-full">
+              {totalParty} Total Travellers
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Number of Adults (18+)
+              <label className="block text-xs font-bold text-slate-600 mb-1">
+                Adults (18+ · Group Split)
               </label>
               <input
                 type="number"
                 min="1"
                 value={adults}
                 onChange={(e) => setAdults(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-base font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 focus:border-teal-500 outline-none"
               />
             </div>
-
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Number of Children (Under 18)
+              <label className="block text-xs font-bold text-slate-600 mb-1">
+                Children (Info-only)
               </label>
               <input
                 type="number"
                 min="0"
                 value={children}
                 onChange={(e) => setChildren(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-base font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 focus:border-teal-500 outline-none"
               />
             </div>
           </div>
 
-          {/* ADD PEOPLE / INVITE MEMBERS */}
+          {/* Search & Invite People */}
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-2">
-              Add Group Members from Team / Contacts
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              🔍 Search & Invite Friends to Trip
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {availableTravellers.map((member) => {
-                const isSelected = selectedMembers.includes(member.id)
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => toggleMember(member.id)}
-                    className={`p-3 rounded-2xl border text-left transition flex items-center gap-2.5 ${
-                      isSelected
-                        ? 'border-teal-600 bg-teal-50/80 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className="text-xl">{member.avatar}</span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-800 truncate">{member.name}</p>
-                      <p className="text-[10px] text-slate-400">{member.role}</p>
-                    </div>
-                  </button>
-                )
-              })}
+            <div className="relative mb-2">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, email, or country (e.g. Ravi, Elena, Pooja)..."
+                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600 font-bold"
+                >
+                  ✕
+                </button>
+              )}
             </div>
+
+            {/* Search Results Dropdown */}
+            {searchResults.length > 0 && (
+              <div className="bg-white border border-teal-200 rounded-2xl shadow-lg p-2 mb-3 max-h-48 overflow-y-auto space-y-1">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
+                  Matching People
+                </p>
+                {searchResults.map((user) => (
+                  <div
+                    key={user.id}
+                    className="flex items-center justify-between p-2 rounded-xl hover:bg-teal-50/70 transition"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-lg">{user.avatar || '👤'}</span>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{user.name}</p>
+                        <p className="text-[10px] text-slate-400">{user.email}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAddMember(user)}
+                      className="px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-xs transition"
+                    >
+                      + Invite
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* OVERALL GROUP BUDGET & CATEGORY LIMITS */}
+        {/* ================= SECTION 3: PERSONAL BUDGETS & TOTAL GROUP BUDGET ================= */}
         <div className="pt-4 border-t border-slate-100 space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-            3. Overall Group Budget
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex items-center justify-between">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Home Currency</label>
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-800 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-              >
-                {currencies.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
+              <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                3. Member Personal Budgets & Group Fund
+              </h2>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Set each person's personal budget. The total group budget is the sum of all members.
+              </p>
+            </div>
+            <span className="text-xs font-extrabold text-teal-800 bg-teal-50 px-3 py-1 rounded-full border border-teal-200">
+              Total: {autoCurrency} {totalGroupBudget.toLocaleString()}
+            </span>
+          </div>
+
+          {/* Member Budget Input List */}
+          <div className="space-y-3">
+            {selectedMembers.map((member) => {
+              const isHost = member.id === hostUser.id
+              const currentBudget = memberBudgets[member.id] || 0
+
+              return (
+                <div
+                  key={member.id}
+                  className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-xl shadow-xs">
+                      {member.avatar || '👤'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-800">{member.name}</span>
+                        {isHost ? (
+                          <span className="text-[9px] font-bold bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded">
+                            Host (You)
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                            Invited Member
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400">{member.email}</span>
+                    </div>
+                  </div>
+
+                  {/* Personal Budget Input for this user */}
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <div className="flex items-center bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-200">
+                      <span className="text-xs font-bold text-slate-400 mr-1.5">{autoCurrency}</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="500"
+                        value={currentBudget}
+                        onChange={(e) => handleBudgetChange(member.id, parseFloat(e.target.value) || 0)}
+                        className="w-28 text-sm font-extrabold text-slate-900 outline-none text-right"
+                      />
+                    </div>
+
+                    {!isHost && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMember(member.id)}
+                        className="w-8 h-8 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center justify-center text-xs font-bold transition"
+                        title="Remove Member"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* DYNAMIC GROUP BUDGET SUMMATION BANNER */}
+          <div className="bg-linear-to-r from-teal-700 to-[#123B3A] text-white rounded-2xl p-4 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase tracking-wider text-teal-200 font-bold block">
+                  Calculated Collective Trip Fund
+                </span>
+                <span className="text-2xl font-black">
+                  {autoCurrency} {totalGroupBudget.toLocaleString()}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] bg-teal-600/80 px-2 py-0.5 rounded-full font-bold">
+                  {selectedMembers.length} Contributing Members
+                </span>
+                <p className="text-[10px] text-teal-200 mt-1">
+                  Avg: {autoCurrency} {Math.round(totalGroupBudget / Math.max(selectedMembers.length, 1)).toLocaleString()} / person
+                </p>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Total Trip Budget Amount
-              </label>
-              <input
-                type="number"
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-lg font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-              />
-            </div>
+            {/* Formula display */}
+            <p className="text-[11px] text-teal-100/90 pt-1 border-t border-teal-600/60 font-mono">
+              Formula: Σ (Member Personal Budgets) = Group Budget
+            </p>
           </div>
 
           {/* Category Caps Breakdown Preview */}
-          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2.5">
+          <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100 space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-              <span>Category Budget Limits (PS-08 Category Caps)</span>
-              <span className="text-teal-700">Total ₹{numBudget.toLocaleString()}</span>
+              <span>Automatic Category Caps (PS-08 Standard)</span>
+              <span className="text-teal-700">{autoCurrency} {totalGroupBudget.toLocaleString()}</span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
               <div className="bg-white p-2 rounded-xl border border-slate-200">
                 <span className="text-slate-400 block text-[10px]">🏨 Stay (35%)</span>
-                <strong className="text-slate-800">₹{Math.round((numBudget * 0.35)).toLocaleString()}</strong>
+                <strong className="text-slate-800">{autoCurrency} {Math.round(totalGroupBudget * 0.35).toLocaleString()}</strong>
               </div>
               <div className="bg-white p-2 rounded-xl border border-slate-200">
                 <span className="text-slate-400 block text-[10px]">🍽️ Food (25%)</span>
-                <strong className="text-slate-800">₹{Math.round((numBudget * 0.25)).toLocaleString()}</strong>
+                <strong className="text-slate-800">{autoCurrency} {Math.round(totalGroupBudget * 0.25).toLocaleString()}</strong>
               </div>
               <div className="bg-white p-2 rounded-xl border border-slate-200">
                 <span className="text-slate-400 block text-[10px]">🚗 Transit (20%)</span>
-                <strong className="text-slate-800">₹{Math.round((numBudget * 0.20)).toLocaleString()}</strong>
+                <strong className="text-slate-800">{autoCurrency} {Math.round(totalGroupBudget * 0.20).toLocaleString()}</strong>
               </div>
               <div className="bg-white p-2 rounded-xl border border-slate-200">
                 <span className="text-slate-400 block text-[10px]">⭐ Activity (10%)</span>
-                <strong className="text-slate-800">₹{Math.round((numBudget * 0.10)).toLocaleString()}</strong>
+                <strong className="text-slate-800">{autoCurrency} {Math.round(totalGroupBudget * 0.10).toLocaleString()}</strong>
               </div>
               <div className="bg-white p-2 rounded-xl border border-slate-200">
                 <span className="text-slate-400 block text-[10px]">📦 Misc (10%)</span>
-                <strong className="text-slate-800">₹{Math.round((numBudget * 0.10)).toLocaleString()}</strong>
+                <strong className="text-slate-800">{autoCurrency} {Math.round(totalGroupBudget * 0.10).toLocaleString()}</strong>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-3 pt-4">
+        {/* Submit Actions */}
+        <div className="flex items-center gap-3 pt-2">
           <button
             type="button"
             onClick={handleCreate}
-            className="flex-1 py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-md transition text-sm"
+            className="flex-1 py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-2xl shadow-md transition text-sm flex items-center justify-center gap-2"
           >
-            Create Trip & Budget
+            <span>🚀</span>
+            <span>Create Trip & Confirm Budget</span>
           </button>
           <button
             type="button"
-            onClick={() => navigate('home')}
+            onClick={() => navigate('trip-dashboard')}
             className="px-6 py-3.5 border border-slate-200 text-slate-700 font-semibold rounded-2xl hover:bg-slate-50 transition text-sm"
           >
             Cancel

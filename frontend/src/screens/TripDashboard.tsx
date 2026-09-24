@@ -1,10 +1,14 @@
-import type { NavigateFn, Trip, Expense } from '../types'
+import type { NavigateFn, Trip, Expense, User } from '../types'
 import { useState } from 'react'
+import { useBudget } from '../features/overall-budget/useBudget'
+import { getRegisteredUsers } from '../services/userRegistry'
 
 interface Props {
   navigate: NavigateFn
   trip: Trip
   expenses: Expense[]
+  currentUser?: User
+  onUpdateMemberBudget?: (tripId: string, userId: string, newBudget: number) => void
 }
 
 const defaultCategories = [
@@ -49,7 +53,7 @@ const catIcons: Record<string, React.ReactNode> = {
   ),
 }
 
-function DonutChart({ pct }: { pct: number }) {
+function DonutChart({ pct, isPersonal }: { pct: number; isPersonal?: boolean }) {
   const r = 72
   const circ = 2 * Math.PI * r
   const filled = (Math.min(pct, 100) / 100) * circ
@@ -69,7 +73,7 @@ function DonutChart({ pct }: { pct: number }) {
         cy="90"
         r={r}
         fill="none"
-        stroke={pct > 80 ? '#F43F5E' : pct > 60 ? '#F59E0B' : '#0D9488'}
+        stroke={isPersonal ? '#6366F1' : pct > 80 ? '#F43F5E' : pct > 60 ? '#F59E0B' : '#0D9488'}
         strokeWidth="14"
         strokeLinecap="round"
         strokeDasharray={`${filled} ${circ}`}
@@ -95,13 +99,27 @@ function DonutChart({ pct }: { pct: number }) {
         fontSize="12"
         fontFamily="Inter, sans-serif"
       >
-        Budget Used
+        {isPersonal ? 'My Share Used' : 'Group Budget Used'}
       </text>
     </svg>
   )
 }
 
-export default function TripDashboard({ navigate, trip, expenses }: Props) {
+export default function TripDashboard({ navigate, trip, expenses, currentUser, onUpdateMemberBudget }: Props) {
+  const activeUser = currentUser || {
+    id: 'usr_you',
+    name: 'You (Aisha)',
+    email: 'aisha.rossi@example.invalid',
+    homeCurrency: 'INR',
+    avatar: '👩🏽',
+    role: 'Owner',
+  }
+
+  // Dual-tier Budget state (Group vs Personal)
+  const [budgetViewMode, setBudgetViewMode] = useState<'group' | 'personal'>('group')
+  const [isEditBudgetOpen, setIsEditBudgetOpen] = useState(false)
+  const [editedBudgetInput, setEditedBudgetInput] = useState('')
+
   // Accordion state for expenses expansion card below travel budget
   const [isExpensesExpanded, setIsExpensesExpanded] = useState(false)
 
@@ -127,20 +145,62 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
     event.target.value = ''
   }
 
-  // Calculations
-  const remaining = trip.budget - trip.spent
-  const pct = Math.round((trip.spent / trip.budget) * 100)
-  const daysTotal = 8
-  const daysGone = 3
-  const daysLeft = daysTotal - daysGone
+  // Calculations from useBudget
+  const {
+    budget,
+    spent,
+    remaining,
+    pct,
+    safeDaily,
+    dailyAvg,
+    projectedTotal: projectedFinal,
+    isOverBudgetProjected,
+    personalBudget,
+    personalSpent,
+    personalRemaining,
+    personalPct,
+    personalSafeDaily,
+    daysGone,
+    daysTotal,
+    daysLeft,
+  } = useBudget(trip, activeUser, expenses)
 
-  const dailyAvg = Math.round(trip.spent / daysGone)
-  const projectedFinal = Math.round(dailyAvg * daysTotal)
-  const projectedOver = Math.max(0, projectedFinal - trip.budget)
-  const safeDaily = Math.round(remaining / Math.max(daysLeft, 1))
+  const projectedOver = isOverBudgetProjected ? projectedFinal - budget : 0
+  const currencySymbol = trip.currency === 'USD' ? '$' : trip.currency === 'EUR' ? '€' : '₹'
+
+  // Look up registered users to display members dynamically
+  const registeredUsers = getRegisteredUsers()
+  const partyMembers = (trip.members || ['usr_you', 'usr_ravi', 'usr_asha']).map((memberId) => {
+    const found = registeredUsers.find((u) => u.id === memberId)
+    const personalAllocation =
+      trip.memberBudgets?.[memberId] ??
+      (memberId === activeUser.id ? personalBudget : Math.round(budget / Math.max(trip.members?.length || 1, 1)))
+
+    return {
+      id: memberId,
+      name: found ? found.name : memberId === activeUser.id ? activeUser.name : memberId,
+      avatar: found ? found.avatar : '👤',
+      isMe: memberId === activeUser.id,
+      budget: personalAllocation,
+    }
+  })
+
+  const openBudgetEditor = () => {
+    setEditedBudgetInput(personalBudget.toString())
+    setIsEditBudgetOpen(true)
+  }
+
+  const handleSavePersonalBudget = (e: React.FormEvent) => {
+    e.preventDefault()
+    const newAmount = parseFloat(editedBudgetInput)
+    if (!isNaN(newAmount) && newAmount >= 0 && onUpdateMemberBudget) {
+      onUpdateMemberBudget(trip.id, activeUser.id, newAmount)
+    }
+    setIsEditBudgetOpen(false)
+  }
 
   return (
-    <div className="min-h-full bg-[#F4FBFA] p-5 md:p-8 max-w-7xl">
+    <div className="min-h-full bg-[#F4FBFA] p-4 md:p-8 max-w-7xl pb-28">
       {/* =========================
           HERO BANNER
       ========================= */}
@@ -153,15 +213,18 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
           backgroundPosition: 'center',
         }}
       >
-        <div className="absolute top-5 left-5 flex items-center gap-2">
+        <div className="absolute top-5 left-5 flex items-center gap-2 flex-wrap">
           <span className="bg-white/90 backdrop-blur-sm text-teal-800 px-3 py-1.5 rounded-full text-xs font-bold shadow-xs">
             ✈️ ACTIVE TRIP · {trip.currency}
           </span>
           {trip.isGroupTrip && (
             <span className="bg-teal-600/90 text-white px-3 py-1.5 rounded-full text-xs font-bold">
-              👥 {trip.adults || 3} Adults{trip.children ? ` · ${trip.children} Children` : ''}
+              👥 {trip.adults || partyMembers.length} Adults{trip.children ? ` · ${trip.children} Children` : ''}
             </span>
           )}
+          <span className="bg-emerald-500/90 text-white px-3 py-1.5 rounded-full text-xs font-bold">
+            💰 Group Fund: {currencySymbol}{budget.toLocaleString()}
+          </span>
         </div>
 
         <div className="relative p-6 md:p-8 text-white w-full">
@@ -190,7 +253,7 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
       </div>
 
       {/* =========================
-          TRIP TRAVELLERS & PARTY MEMBERS BAR
+          TRIP TRAVELLERS & PARTY MEMBERS BAR (WITH MEMBER PERSONAL BUDGETS)
       ========================= */}
       <div className="bg-white rounded-3xl border border-teal-100 shadow-sm p-4 md:p-5 mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -198,16 +261,16 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
             <span className="text-xl">👥</span>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-slate-900 text-sm md:text-base">Trip Travellers & Party</h3>
+                <h3 className="font-bold text-slate-900 text-sm md:text-base">Trip Travellers & Party Members</h3>
                 <span className="bg-teal-50 text-teal-800 border border-teal-200/60 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-                  {trip.adults || 3} Adults{trip.children ? ` · ${trip.children} Children` : ' · 0 Children'}
+                  {trip.adults || partyMembers.length} Adults{trip.children ? ` · ${trip.children} Children` : ' · 0 Children'}
                 </span>
                 <span className="text-[10px] bg-slate-100 text-slate-500 font-semibold px-2 py-0.5 rounded-md">
-                  Total: {(trip.adults || 3) + (trip.children || 0)} Travellers
+                  Total: {(trip.adults || partyMembers.length) + (trip.children || 0)} Travellers
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Group split calculations apply to adults only · Children are included as travel info
+                Group split calculations apply to adults only · Each adult contributes an individual personal budget
               </p>
             </div>
           </div>
@@ -219,46 +282,51 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
           </div>
         </div>
 
-        {/* Member Avatars & Names Grid */}
+        {/* Dynamic Member Avatars & Personal Budget Cards */}
         <div className="flex flex-wrap items-center gap-2.5 pt-3">
-          {/* Adult 1: You (Aisha) */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-teal-200/70 px-3 py-2 rounded-2xl shadow-2xs">
-            <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center text-base shadow-xs">
-              👩🏽
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold text-slate-900 leading-tight">You (Aisha)</span>
-                <span className="text-[9px] font-bold bg-teal-100 text-teal-800 px-1 py-0.2 rounded">Host</span>
+          {partyMembers.map((member) => (
+            <div
+              key={member.id}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-2xl border transition ${
+                member.isMe
+                  ? 'border-indigo-300 bg-indigo-50/70 shadow-2xs'
+                  : 'border-slate-200 bg-slate-50 shadow-2xs'
+              }`}
+            >
+              <div className="w-8 h-8 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-base shadow-xs">
+                {member.avatar}
               </div>
-              <span className="text-[10px] text-teal-700 font-medium">Adult Member</span>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-900 leading-tight">
+                    {member.name} {member.isMe ? '(You)' : ''}
+                  </span>
+                  {member.isMe && (
+                    <span className="text-[9px] font-bold bg-indigo-100 text-indigo-800 px-1 py-0.2 rounded">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className="text-[10px] font-bold text-teal-700">
+                    Budget: {currencySymbol}{member.budget.toLocaleString()}
+                  </span>
+                  {member.isMe && (
+                    <button
+                      type="button"
+                      onClick={openBudgetEditor}
+                      className="text-[9px] text-indigo-700 hover:underline font-bold"
+                    >
+                      (Edit)
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-
-          {/* Adult 2: Ravi Sharma */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/70 px-3 py-2 rounded-2xl shadow-2xs">
-            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center text-base shadow-xs">
-              👨🏽
-            </div>
-            <div>
-              <span className="text-xs font-bold text-slate-900 block leading-tight">Ravi Sharma</span>
-              <span className="text-[10px] text-slate-400">Adult Member</span>
-            </div>
-          </div>
-
-          {/* Adult 3: Asha Patel */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/70 px-3 py-2 rounded-2xl shadow-2xs">
-            <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center text-base shadow-xs">
-              👩🏻
-            </div>
-            <div>
-              <span className="text-xs font-bold text-slate-900 block leading-tight">Asha Patel</span>
-              <span className="text-[10px] text-slate-400">Adult Member</span>
-            </div>
-          </div>
+          ))}
 
           {/* Children Pill (if any) */}
-          {(trip.children || 0) > 0 ? (
+          {(trip.children || 0) > 0 && (
             <div className="flex items-center gap-2 bg-indigo-50/70 border border-indigo-100 px-3 py-2 rounded-2xl">
               <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-base">
                 👧
@@ -270,84 +338,145 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
                 <span className="text-[10px] text-indigo-600 font-medium">Info only · Not in accounts</span>
               </div>
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 rounded-2xl text-[11px] text-slate-400 border border-dashed border-slate-200">
-              <span>👶 0 Children registered</span>
-            </div>
           )}
         </div>
       </div>
 
       {/* =========================
-          QUICK STATS CARDS
+          DUAL-TIER QUICK STATS CARDS: GROUP BUDGET + MY PERSONAL BUDGET
       ========================= */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {[
-          {
-            label: 'Overall Budget',
-            value: `₹${trip.budget.toLocaleString()}`,
-            sub: 'Allocated trip fund',
-            icon: '💰',
-          },
-          {
-            label: 'Spent to Date',
-            value: `₹${trip.spent.toLocaleString()}`,
-            sub: `${daysGone} of ${daysTotal} days used`,
-            icon: '🧾',
-          },
-          {
-            label: 'Remaining Balance',
-            value: `₹${remaining.toLocaleString()}`,
-            sub: `${daysLeft} days remaining`,
-            icon: '🌴',
-            green: true,
-          },
-          {
-            label: 'Daily Average',
-            value: `₹${dailyAvg.toLocaleString()}`,
-            sub: 'Actual per day',
-            icon: '📍',
-          },
-        ].map((s) => (
-          <div
-            key={s.label}
-            className="bg-white rounded-2xl border border-teal-100 shadow-sm p-5 hover:-translate-y-0.5 hover:shadow-md transition-all"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">{s.label}</p>
-              <span className="text-xl">{s.icon}</span>
-            </div>
-            <p className={`text-2xl font-bold ${s.green ? 'text-teal-600' : 'text-slate-900'}`}>
-              {s.value}
-            </p>
-            <p className="text-xs text-slate-400 mt-1">{s.sub}</p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+        {/* CARD 1: GROUP TRIP BUDGET */}
+        <div className="bg-white rounded-2xl border border-teal-200 shadow-sm p-4 hover:shadow-md transition">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Group Trip Budget</p>
+            <span className="text-xl">👥</span>
           </div>
-        ))}
+          <p className="text-2xl font-black text-slate-900">
+            {currencySymbol}{budget.toLocaleString()}
+          </p>
+          <p className="text-[11px] text-teal-700 font-semibold mt-1">
+            Sum of all {partyMembers.length} members' budgets
+          </p>
+        </div>
+
+        {/* CARD 2: MY PERSONAL BUDGET */}
+        <div className="bg-indigo-50/50 rounded-2xl border border-indigo-200 shadow-sm p-4 hover:shadow-md transition relative">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider">My Personal Budget</p>
+            <span className="text-xl">👤</span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <p className="text-2xl font-black text-indigo-900">
+              {currencySymbol}{personalBudget.toLocaleString()}
+            </p>
+            <button
+              type="button"
+              onClick={openBudgetEditor}
+              className="text-[10px] bg-indigo-600 text-white font-bold px-2 py-0.5 rounded-lg hover:bg-indigo-700 transition"
+            >
+              Edit
+            </button>
+          </div>
+          <p className="text-[11px] text-indigo-600 font-medium mt-1">
+            {currencySymbol}{personalRemaining.toLocaleString()} remaining for you
+          </p>
+        </div>
+
+        {/* CARD 3: GROUP SPENT TO DATE */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Group Spent to Date</p>
+            <span className="text-xl">🧾</span>
+          </div>
+          <p className="text-2xl font-black text-slate-900">
+            {currencySymbol}{spent.toLocaleString()}
+          </p>
+          <p className="text-[11px] text-slate-400 mt-1">
+            {daysGone} of {daysTotal} days used ({pct}%)
+          </p>
+        </div>
+
+        {/* CARD 4: MY PERSONAL SPEND */}
+        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-4 hover:shadow-md transition">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider">My Personal Spend</p>
+            <span className="text-xl">💳</span>
+          </div>
+          <p className="text-2xl font-black text-emerald-800">
+            {currencySymbol}{personalSpent.toLocaleString()}
+          </p>
+          <p className="text-[11px] text-emerald-600 font-semibold mt-1">
+            {personalPct}% of your individual cap
+          </p>
+        </div>
       </div>
 
       {/* =========================
-          BUDGET & AI GUARDIAN SECTION
+          BUDGET GAUGE & AI GUARDIAN SECTION
       ========================= */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-        {/* TRAVEL BUDGET CARD (With Expenses Expansion Card Below It) */}
+        {/* DUAL-TIER BUDGET CARD (GROUP VS PERSONAL VIEW TOGGLE) */}
         <div className="space-y-4">
           <div className="bg-white rounded-3xl border border-teal-100 shadow-sm p-6 flex flex-col items-center justify-center">
-            <div className="w-full flex justify-between items-center mb-2">
-              <h3 className="font-bold text-slate-900 text-base">Travel Budget</h3>
-              <span className="text-xs font-semibold bg-teal-50 text-teal-700 px-2.5 py-1 rounded-full">
-                {pct}% used
-              </span>
+            {/* Toggle Switcher */}
+            <div className="w-full flex justify-between items-center mb-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{budgetViewMode === 'group' ? '👥' : '👤'}</span>
+                <h3 className="font-extrabold text-slate-900 text-sm">
+                  {budgetViewMode === 'group' ? 'Group Budget' : 'My Personal Budget'}
+                </h3>
+              </div>
+
+              {/* Pill Toggle */}
+              <div className="flex bg-slate-100 p-0.5 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setBudgetViewMode('group')}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition ${
+                    budgetViewMode === 'group'
+                      ? 'bg-white text-teal-800 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Group
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBudgetViewMode('personal')}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition ${
+                    budgetViewMode === 'personal'
+                      ? 'bg-white text-indigo-700 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  Mine
+                </button>
+              </div>
             </div>
 
-            <DonutChart pct={pct} />
+            <DonutChart
+              pct={budgetViewMode === 'group' ? pct : personalPct}
+              isPersonal={budgetViewMode === 'personal'}
+            />
 
-            <div className="text-center -mt-1">
-              <p className="font-bold text-slate-900 text-lg">
-                ₹{remaining.toLocaleString()} left
+            <div className="text-center -mt-1 w-full">
+              <p className="font-extrabold text-slate-900 text-lg">
+                {currencySymbol}
+                {(budgetViewMode === 'group' ? remaining : personalRemaining).toLocaleString()} left
               </p>
               <p className="text-xs text-slate-400 mt-0.5">
-                Funded in {trip.currency} · Budget: ₹{trip.budget.toLocaleString()}
+                {budgetViewMode === 'group'
+                  ? `Funded: ${currencySymbol}${budget.toLocaleString()} (${trip.currency})`
+                  : `Your Personal Fund: ${currencySymbol}${personalBudget.toLocaleString()}`}
               </p>
+              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs px-2">
+                <span className="text-slate-500 font-medium">Safe Daily Runway:</span>
+                <span className="font-bold text-teal-800">
+                  {currencySymbol}
+                  {(budgetViewMode === 'group' ? safeDaily : personalSafeDaily).toLocaleString()} / day
+                </span>
+              </div>
             </div>
           </div>
 
@@ -407,7 +536,7 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
           </div>
         </div>
 
-        {/* AI TRAVEL GUARDIAN SECTION (UPGRADED UI: ASK GUARDIAN & WHAT-IF SIMULATION + STATISTICS) */}
+        {/* AI TRAVEL GUARDIAN SECTION */}
         <div className="lg:col-span-2 rounded-3xl border border-amber-200/90 shadow-sm p-6 md:p-7 bg-gradient-to-br from-[#FFF9EC] via-[#FFFDF8] to-[#FFF3D6] flex flex-col justify-between">
           <div>
             {/* Header */}
@@ -438,11 +567,11 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
             {/* Health Status & Runway Insight */}
             <div className="p-4 bg-white/90 rounded-2xl border border-amber-100 mb-4 shadow-2xs">
               <p className="text-xs md:text-sm text-slate-800 leading-relaxed">
-                Current spending rate is <strong>₹{dailyAvg.toLocaleString()}/day</strong>. Your calculated safe daily limit is <strong>₹{safeDaily.toLocaleString()}/day</strong> across the remaining {daysLeft} days.
+                Group spending rate is <strong>{currencySymbol}{dailyAvg.toLocaleString()}/day</strong>. Your calculated safe daily limit is <strong>{currencySymbol}{safeDaily.toLocaleString()}/day</strong> across the remaining {daysLeft} days.
               </p>
               {projectedOver > 0 && (
                 <p className="text-xs text-rose-600 font-semibold mt-1.5 flex items-center gap-1">
-                  <span>⚠️ Pace Warning:</span> Continuing at this pace will exceed your trip budget by ₹{projectedOver.toLocaleString()} INR.
+                  <span>⚠️ Pace Warning:</span> Continuing at this pace will exceed your trip budget by {currencySymbol}{projectedOver.toLocaleString()}.
                 </p>
               )}
             </div>
@@ -450,32 +579,31 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
             {/* Trip AI Statistics */}
             <div className="grid grid-cols-3 gap-2.5 mb-5">
               <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Current Spend</span>
-                <span className="text-base font-extrabold text-slate-900">₹{trip.spent.toLocaleString()}</span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">{pct}% of budget</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Group Spend</span>
+                <span className="text-base font-extrabold text-slate-900">{currencySymbol}{trip.spent.toLocaleString()}</span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">{pct}% of group fund</span>
               </div>
 
               <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Safe Daily Limit</span>
-                <span className="text-base font-extrabold text-teal-800">₹{safeDaily.toLocaleString()}</span>
+                <span className="text-base font-extrabold text-teal-800">{currencySymbol}{safeDaily.toLocaleString()}</span>
                 <span className="text-[10px] text-teal-600 font-medium block mt-0.5">{daysLeft} days left</span>
               </div>
 
               <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Projected Total</span>
                 <span className={`text-base font-extrabold ${projectedOver > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-                  ₹{projectedFinal.toLocaleString()}
+                  {currencySymbol}{projectedFinal.toLocaleString()}
                 </span>
                 <span className="text-[10px] text-rose-600 font-medium block mt-0.5">
-                  {projectedOver > 0 ? `+₹${projectedOver.toLocaleString()} over` : 'On track'}
+                  {projectedOver > 0 ? `+${currencySymbol}${projectedOver.toLocaleString()} over` : 'On track'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* DUAL ACTION BUTTONS: 1) ASK GUARDIAN (NAVIGATES TO GUARDIAN CHATBOT) 2) WHAT-IF SIMULATION */}
+          {/* DUAL ACTION BUTTONS: 1) ASK GUARDIAN 2) WHAT-IF SIMULATION */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            {/* ACTION 1: ASK AI GUARDIAN -> OPENS FULL CHATBOT PAGE */}
             <button
               onClick={() => navigate('ai-guardian')}
               className="group p-3.5 bg-gradient-to-br from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl shadow-sm hover:shadow-md transition text-left flex flex-col justify-between"
@@ -496,7 +624,6 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
               </div>
             </button>
 
-            {/* ACTION 2: WHAT-IF SIMULATION & TRIP STATISTICS */}
             <button
               onClick={() => navigate('what-if')}
               className="group p-3.5 bg-white hover:bg-amber-50/70 border border-amber-200 text-slate-900 rounded-2xl shadow-2xs hover:shadow-sm transition text-left flex flex-col justify-between"
@@ -521,7 +648,7 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
       </div>
 
       {/* =========================
-          VIEW EXPENSES CARD (REPLACED RAW RECENT EXPENSES LIST)
+          VIEW EXPENSES & SETTLEMENT SHORTCUTS
       ========================= */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-7">
         {/* CARD FOR VIEWING EXPENSES FOR THAT TRIP */}
@@ -549,11 +676,15 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
                 <span className="text-[11px] text-slate-400 block font-medium">Shared Group Spend</span>
-                <span className="text-sm font-bold text-slate-800">₹22,560 (86%)</span>
+                <span className="text-sm font-bold text-slate-800">
+                  {currencySymbol}{Math.round(spent * 0.86).toLocaleString()}
+                </span>
               </div>
               <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">Personal Spend</span>
-                <span className="text-sm font-bold text-slate-800">₹3,612 (14%)</span>
+                <span className="text-[11px] text-slate-400 block font-medium">Your Personal Spend</span>
+                <span className="text-sm font-bold text-indigo-700">
+                  {currencySymbol}{personalSpent.toLocaleString()}
+                </span>
               </div>
             </div>
           </div>
@@ -583,7 +714,7 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
                 </div>
               </div>
               <span className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full">
-                3 Travellers
+                {partyMembers.length} Travellers
               </span>
             </div>
 
@@ -656,6 +787,87 @@ export default function TripDashboard({ navigate, trip, expenses }: Props) {
           ))}
         </div>
       </div>
+
+      {/* =========================
+          EDIT PERSONAL BUDGET MODAL (INVITED MEMBER OR ORGANIZER)
+      ========================= */}
+      {isEditBudgetOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-indigo-100 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">💰</span>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Update My Personal Budget
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Trip: {trip.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditBudgetOpen(false)}
+                className="text-slate-400 hover:text-slate-700 text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              When you adjust your personal budget allocation, the <strong>total group budget fund</strong> automatically recalculates as the sum of all members' contributions.
+            </p>
+
+            <form onSubmit={handleSavePersonalBudget} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Your Personal Budget ({trip.currency})
+                </label>
+                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-200">
+                  <span className="text-sm font-bold text-slate-400 mr-2">{currencySymbol}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="500"
+                    value={editedBudgetInput}
+                    onChange={(e) => setEditedBudgetInput(e.target.value)}
+                    required
+                    className="w-full bg-transparent text-lg font-black text-slate-900 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-indigo-50 rounded-xl text-[11px] text-indigo-900 border border-indigo-100">
+                <strong>Current Group Budget:</strong> {currencySymbol}{budget.toLocaleString()}
+                <br />
+                <strong>New Group Budget:</strong> {currencySymbol}
+                {(
+                  budget -
+                  personalBudget +
+                  (parseFloat(editedBudgetInput) || 0)
+                ).toLocaleString()}
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition shadow-md"
+                >
+                  Save & Update Group Budget
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditBudgetOpen(false)}
+                  className="px-4 py-3 border border-slate-200 text-slate-600 font-semibold rounded-xl text-xs hover:bg-slate-50 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
