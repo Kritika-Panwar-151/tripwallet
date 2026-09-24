@@ -6,6 +6,7 @@ import {
   getCurrencyForCountry,
 } from '../data/canonicalReferences'
 import { searchUsers, getRegisteredUsers } from '../services/userRegistry'
+import { detectLocationAndCurrency } from '../features/trip-travellers-and-party/gpsCurrencyService'
 
 interface Props {
   navigate: NavigateFn
@@ -32,6 +33,29 @@ export default function CreateTripScreen({ navigate, currentUser, onCreated }: P
   const [destinationCity, setDestinationCity] = useState('Zurich')
   const [startDate, setStartDate] = useState('2026-10-15')
   const [endDate, setEndDate] = useState('2026-10-22')
+
+  // GPS Currency Detection State
+  const [isDetectingGps, setIsDetectingGps] = useState(false)
+  const [gpsNotice, setGpsNotice] = useState<string | null>(null)
+
+  const handleGpsDetectOrigin = async () => {
+    setIsDetectingGps(true)
+    setGpsNotice(null)
+    try {
+      const loc = await detectLocationAndCurrency()
+      if (loc.countryName) {
+        handleOriginCountryChange(loc.countryName)
+      }
+      if (loc.cityName) {
+        setOriginCity(loc.cityName)
+      }
+      setGpsNotice(loc.message || `📍 GPS Detected: ${loc.cityName}, ${loc.countryName} (${loc.currency})`)
+    } catch (err) {
+      console.warn('GPS detection error:', err)
+    } finally {
+      setIsDetectingGps(false)
+    }
+  }
 
   // Auto-derived currency from Origin/Home Country
   const autoCurrency = useMemo(() => getCurrencyForCountry(originCountry), [originCountry])
@@ -206,9 +230,21 @@ export default function CreateTripScreen({ navigate, currentUser, onCreated }: P
             {/* Home/Origin Country & City */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">
-                  Home Country (Origin)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-600">
+                    Home Country (Origin)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGpsDetectOrigin}
+                    disabled={isDetectingGps}
+                    className="text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                    title="Detect current location and currency via GPS"
+                  >
+                    <span>📍</span>
+                    <span>{isDetectingGps ? 'Detecting...' : 'Detect GPS Currency'}</span>
+                  </button>
+                </div>
                 <select
                   value={originCountry}
                   onChange={(e) => handleOriginCountryChange(e.target.value)}
@@ -235,6 +271,19 @@ export default function CreateTripScreen({ navigate, currentUser, onCreated }: P
                 />
               </div>
             </div>
+
+            {gpsNotice && (
+              <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-3 py-1.5 rounded-xl flex items-center justify-between">
+                <span>{gpsNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setGpsNotice(null)}
+                  className="text-slate-400 hover:text-slate-600 font-bold ml-2 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Destination Country & City */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-teal-50/40 rounded-2xl border border-teal-100">
