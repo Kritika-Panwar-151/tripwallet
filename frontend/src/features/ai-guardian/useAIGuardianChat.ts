@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { type ChatMessage, queryGuardianKnowledge } from './guardianEngine'
+import { type ChatMessage, queryGuardianKnowledgeAsync } from './guardianEngine'
 
 export function useAIGuardianChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -18,7 +18,7 @@ export function useAIGuardianChat() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
 
-  const handleSend = (textToSend?: string) => {
+  const handleSend = async (textToSend?: string) => {
     const query = (textToSend || input).trim()
     if (!query) return
 
@@ -33,8 +33,8 @@ export function useAIGuardianChat() {
     setInput('')
     setIsTyping(true)
 
-    setTimeout(() => {
-      const response = queryGuardianKnowledge(query)
+    try {
+      const response = await queryGuardianKnowledgeAsync(query)
       const botMsg: ChatMessage = {
         id: 'bot_' + Date.now(),
         sender: 'guardian',
@@ -43,8 +43,11 @@ export function useAIGuardianChat() {
         time: 'Just now',
       }
       setMessages((prev) => [...prev, botMsg])
+    } catch (err) {
+      console.error('Error querying Guardian AI:', err)
+    } finally {
       setIsTyping(false)
-    }, 400)
+    }
   }
 
   return {

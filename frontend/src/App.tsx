@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Screen, Trip, Expense, User } from './types'
 import TopBar from './components/TopBar'
 import BottomNav from './components/BottomNav'
@@ -14,122 +14,45 @@ import AIGuardian from './screens/AIGuardian'
 import WhatIf from './screens/WhatIf'
 import GroupSettlement from './screens/GroupSettlement'
 import LoginScreen, { sampleUsers } from './screens/LoginScreen'
-
-const initialTrips: Trip[] = [
-  {
-    id: 'europe',
-    name: 'Europe Adventure',
-    destination: 'Rome & Paris, Europe',
-    startDate: '12 Sep',
-    endDate: '20 Sep 2026',
-    currency: 'INR',
-    budget: 60000,
-    spent: 26172,
-    adults: 3,
-    children: 0,
-    partySize: 3,
-    members: ['usr_you', 'usr_ravi', 'usr_asha'],
-    isGroupTrip: true,
-    categoryCaps: {
-      accommodation: 21000,
-      food: 15000,
-      transport: 12000,
-      activities: 6000,
-      misc: 6000,
-    },
-  },
-  {
-    id: 'goa',
-    name: 'Goa Getaway',
-    destination: 'Goa, India',
-    startDate: '2 Oct',
-    endDate: '6 Oct 2026',
-    currency: 'INR',
-    budget: 25000,
-    spent: 8420,
-    adults: 2,
-    children: 1,
-    partySize: 3,
-    members: ['usr_you', 'usr_pooja'],
-    isGroupTrip: true,
-  },
-]
-
-const initialExpenses: Expense[] = [
-  {
-    id: '1',
-    tripId: 'europe',
-    merchant: 'Restaurant Milano',
-    amount: 42,
-    currency: 'EUR',
-    convertedAmount: 3948,
-    category: 'Food',
-    date: '15 Sep',
-    paidBy: 'You (Aisha)',
-    isShared: true,
-    splitBetween: ['You (Aisha)', 'Ravi', 'Asha'],
-  },
-  {
-    id: '2',
-    tripId: 'europe',
-    merchant: 'Hotel Roma',
-    amount: 180,
-    currency: 'EUR',
-    convertedAmount: 16920,
-    category: 'Accommodation',
-    date: '14 Sep',
-    paidBy: 'Ravi',
-    isShared: true,
-    splitBetween: ['You (Aisha)', 'Ravi', 'Asha'],
-  },
-  {
-    id: '3',
-    tripId: 'europe',
-    merchant: 'Metro Pass',
-    amount: 18,
-    currency: 'EUR',
-    convertedAmount: 1692,
-    category: 'Transport',
-    date: '15 Sep',
-    paidBy: 'Asha',
-    isShared: true,
-    splitBetween: ['You (Aisha)', 'Ravi', 'Asha'],
-  },
-  {
-    id: '4',
-    tripId: 'europe',
-    merchant: 'Colosseum Guided Tour',
-    amount: 35,
-    currency: 'EUR',
-    convertedAmount: 3290,
-    category: 'Activities',
-    date: '15 Sep',
-    paidBy: 'You (Aisha)',
-    isShared: true,
-    splitBetween: ['You (Aisha)', 'Ravi', 'Asha'],
-  },
-  {
-    id: '5',
-    tripId: 'europe',
-    merchant: 'Italian Leather Souvenir',
-    amount: 3200,
-    currency: 'INR',
-    convertedAmount: 3200,
-    category: 'Shopping',
-    date: '16 Sep',
-    paidBy: 'You (Aisha)',
-    isShared: false,
-    splitBetween: ['You (Aisha)'],
-  },
-]
+import {
+  fetchTripsFromSupabase,
+  fetchExpensesFromSupabase,
+  saveTripToSupabase,
+  saveExpenseToSupabase,
+  initialTripsFallback,
+  initialExpensesFallback,
+} from './services/supabaseDataService'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('trip-dashboard')
   const [currentUser, setCurrentUser] = useState<User>(sampleUsers[0])
-  const [trips, setTrips] = useState<Trip[]>(initialTrips)
-  const [currentTrip, setCurrentTrip] = useState<Trip>(initialTrips[0])
-  const [expenses, setExpenses] = useState<Expense[]>(initialExpenses)
+  const [trips, setTrips] = useState<Trip[]>(initialTripsFallback)
+  const [currentTrip, setCurrentTrip] = useState<Trip>(initialTripsFallback[0])
+  const [expenses, setExpenses] = useState<Expense[]>(initialExpensesFallback)
   const [isConverterOpen, setIsConverterOpen] = useState(false)
+  const [loadingData, setLoadingData] = useState(true)
+
+  // Load Trips & Expenses from Supabase on mount
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const loadedTrips = await fetchTripsFromSupabase()
+        const loadedExpenses = await fetchExpensesFromSupabase()
+        if (loadedTrips && loadedTrips.length > 0) {
+          setTrips(loadedTrips)
+          setCurrentTrip(loadedTrips[0])
+        }
+        if (loadedExpenses && loadedExpenses.length > 0) {
+          setExpenses(loadedExpenses)
+        }
+      } catch (err) {
+        console.error('Failed to load Supabase data:', err)
+      } finally {
+        setLoadingData(false)
+      }
+    }
+    loadData()
+  }, [])
 
   const navigate = (s: Screen) => {
     setScreen(s)
@@ -139,15 +62,16 @@ export default function App() {
   const handleCreateTrip = (newTrip: Trip) => {
     setTrips((prev) => [newTrip, ...prev])
     setCurrentTrip(newTrip)
+    saveTripToSupabase(newTrip, currentUser.id)
   }
 
   const handleAddExpense = (newExpense: Expense) => {
     setExpenses((prev) => [newExpense, ...prev])
-    // update current trip spent amount
     setCurrentTrip((prev) => ({
       ...prev,
       spent: prev.spent + newExpense.convertedAmount,
     }))
+    saveExpenseToSupabase(newExpense, currentUser.id)
   }
 
   const renderScreen = () => {
